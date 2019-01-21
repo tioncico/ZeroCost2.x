@@ -11,6 +11,25 @@ class Request
     protected $req = [];
     protected $request = '';
 
+    function getGet(){
+        return $this->req[0];
+    }
+    function getPost(){
+        return $this->req[1];
+    }
+
+    function getCookie(){
+        return $this->req[2];
+    }
+
+    function getServer(){
+        return $this->req[3];
+    }
+
+    function getFile(){
+        return $this->req[4];
+    }
+
     function getRequest(){
         return $this->req;
     }
@@ -26,8 +45,19 @@ class Request
 
         $len = explode("\r\n",$len[1]);
         $len = intval($len[0]);
-        var_dump($len);
-        var_dump(strlen($list[2]));
+        $dataLen = 0;
+        foreach ($list as $key =>$item) {
+            if($key!=0){
+                $dataLen+=strlen($item);
+            }
+        }
+        $dataLen += (count($list)-2)*4;
+        if($len<=$dataLen){
+            return true;
+        }
+        else{
+            return false;
+        }
     }
 
     function gc(){
