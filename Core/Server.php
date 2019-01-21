@@ -11,8 +11,8 @@ class Server
     protected $workList = [];
     protected $serverPid = 0;
     protected $mainPid = 0;
-    protected $response = [];
-    protected $request = [];
+    protected  $response = null;
+    protected  $request = null;
 
     function __construct()
     {
@@ -25,6 +25,8 @@ class Server
         $this->mainPid = getmypid();
         require 'Response.php';
         require 'Request.php';
+        $this->response = new Response();
+        $this->request = new Request();
     }
 
     protected function getResponse(): Response
@@ -93,7 +95,7 @@ class Server
         $read_socks = array();
         $write_socks = array();
         $except_socks = NULL;  // 注意 php 不支持直接将NULL作为引用传参，所以这里定义一个变量
-        $fd = 0;
+
         $read_socks[] = $servsock;
         while (1) {
             $tmp_reads = $read_socks;
@@ -103,7 +105,7 @@ class Server
             foreach ($tmp_reads as $key => $read) {
 
                 if ($read == $servsock) {
-                    $fd++;
+
                     /* 有新的客户端连接请求 */
                     $connsock = socket_accept($servsock);  //响应客户端连接， 此时不会造成阻塞
                     if ($connsock) {
@@ -112,16 +114,15 @@ class Server
                         // 把新的连接sokcet加入监听
                         $read_socks[] = $connsock;
                         $write_socks[] = $connsock;
-                        $this->response[$fd] = new Response();
-                        $this->request[$fd] = new Request();
+                        $this->response->gc();
+                        $this->request->gc();
                     }
-                    if($fd==99999){
-                        $fd = 0;
-                    }
+
                 } else {
                     $data = socket_read($read, 1024);  //从客户端读取数据, 此时一定会读到数组而不会产生阻塞
                     socket_getpeername($read, $addr, $port);  //获取远程客户端ip地址和端口
                     //客户端异常退出
+
                     if($data===''){
                         //移除对该 socket 监听
                         foreach ($read_socks as $key => $val) {
@@ -132,17 +133,20 @@ class Server
                             if ($val == $read) unset($write_socks[$key]);
                         }
                         socket_close($read);
+                        continue;
                     }
 
-                    $request =  $this->request[$fd];
+
+
+                    $request =   $this->request;
+
                     $request->setRequest($data);
                     //判断报文是否结束
                     $end = $request->isOver();
                     if ($end) {
                         $request->_init();
-                        $sendData = $this->response[$fd]->send('<html><body>hello word</body></html>');
-                        unset($this->response[$fd]);
-                        unset($this->request[$fd]);
+                        $sendData =  $this->response->send('<html><body>hello word</body></html>');
+
                     }
                     if(!empty($end)){
                         if (!empty($sendData)&&in_array($read, $tmp_writes)) {

@@ -39,10 +39,13 @@ class Request
     }
 
     function isOver(){
+        $this->request = strtolower(    $this->request );
         $list = explode("\r\n\r\n",$this->request);
 
         $len = explode('content-length:',$list[0]);
-
+        if(empty($len[1])){
+            return true;
+        }
         $len = explode("\r\n",$len[1]);
         $len = intval($len[0]);
         $dataLen = 0;
