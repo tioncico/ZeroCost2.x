@@ -34,11 +34,7 @@ class Server
         $this->shmReq = new ShmQueue('q');
         $this->shmRes = new ShmQueue('s');
         $this->response = new Response();
-        $this->request = [];
-        //最高支持10个并发
-        for ($i=0;$i<10;$i++){
-            $this->request[$i] = new Request();
-        }
+        $this->request = new Request();
     }
 
     protected function getResponse(): Response
@@ -46,9 +42,11 @@ class Server
         return $this->response;
     }
 
-    protected function getRequest($index):Request{
-        return $this->request[$index];
+    protected function getRequest():Request
+    {
+        return $this->request;
     }
+
     public function init()
     {
         //server
@@ -79,8 +77,20 @@ class Server
 
     function work()
     {
+        $fdFk = '@@##--##!!';
         while (1){
-            $this->shmReq->pop();
+            $data = $this->shmReq->pop();
+            if(!empty($data)){
+                $data = explode($fdFk,$data);
+                if(intval($data[0])!=0){
+                    if(!empty($data[1])){
+                        $this->getRequest()->setRequest($data[1]);
+                        $this->getRequest()->_init();
+                        $this->shmRes->push($data[0].$fdFk.'hello word');
+                        $this->getRequest()->gc();
+                    }
+                }
+            }
             usleep(1);
         }
 
@@ -106,42 +116,27 @@ class Server
             $connection = stream_socket_accept($tcp_socket,0,$remote_address);
             restore_error_handler();
             if ($connection) {
-                $fd = intval($connection);
                 $client_list[intval($connection)] = $connection;
-                if($this->getRequest($fd%10)->getRequestStr()!=''){
-                    while (1){
-                        sleep(0.1);
-                        if($this->getRequest($fd%10)->getRequestStr()==''){
-                            break;
-                        }
-                    }
-                }
-                $this->getRequest($fd%10)->gc();
                 stream_set_blocking($connection, 0);//设置客户端非阻塞
             }
             foreach ($client_list as $key=>$client){
                 $data = fread($client, 65535);
-                $power = false;
-
-                if ($data === '' || $data === false) {
-                    if ( feof($client)) {//客户端关闭
-                        unset($client_list[$client]);
+                if($data!='') {
+                    $pushData = $key.'@@##--##!!'.$data;
+                    $this->shmReq->push($pushData);
+                }
+                while ( $pop = $this->shmRes->pop()){
+                    $list = explode('@@##--##!!',$pop);
+                    if(intval($list[0])!=0){
+                        if(!empty($client_list[$list[0]])&&!empty($list[1])){
+                            fwrite($client_list[$list[0]],$this->response->send($list[1]));//发送给客户端
+                            if ( feof($client_list[$list[0]])) {
+                                unset($client_list[$list[0]]);
+                            }
+                        }
                     }
                 }
 
-                if($data!=''){
-                    $this->shmReq->push($data);
-                    $this->getRequest($key%10)->setRequest($data);
-                    $power = $this->getRequest($key%10)->isOver();
-                }
-
-
-                if($power){
-                    fwrite($client,$this->response->send('hello word'));//发送给客户端
-                    $this->getRequest($key%10)->gc();
-                }else{
-                    continue;
-                }
             }
             usleep(1);
         }
