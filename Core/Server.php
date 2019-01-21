@@ -11,38 +11,51 @@ class Server
     protected $workList = [];
     protected $serverPid = 0;
     protected $mainPid = 0;
-    protected $serverSock = null;
+    protected $response = null;
+    protected $request = null;
 
     function __construct()
     {
+
         $this->daemon(
             function () {
-                $this->init();
+                $this->onStart();
             }
         );
         $this->mainPid = getmypid();
+        require 'Response.php';
+        require 'Request.php';
+        $this->response = new Response();
+        $this->request = new Request();
     }
 
-    private function init()
+    protected function getResponse(): Response
+    {
+        return $this->response;
+    }
+
+    protected function getRequest():Request{
+        return $this->request;
+    }
+    public function init()
     {
         //server
         $this->serverPid = $this->process(function () {
-            $this->start();
             $this->run();
-            $this->end();
         });
 
         //work
         for ($i = 0; $i < 3; $i++) {
             if ($pid = $this->process(function () {
-                    $this->work();
+                $this->work();
             })) {
                 $this->workList[] = $pid;
             }
         }
+        $this->end();
     }
 
-    function start()
+    function onStart()
     {
 
     }
@@ -84,12 +97,11 @@ class Server
         $except_socks = NULL;  // 注意 php 不支持直接将NULL作为引用传参，所以这里定义一个变量
 
         $read_socks[] = $servsock;
-
         while (1) {
             $tmp_reads = $read_socks;
             $tmp_writes = $write_socks;
-            $count = socket_select($tmp_reads, $tmp_writes, $except_socks, 30);  // timeout 传 NULL 会一直阻塞直到有结果返回
-            foreach ($tmp_reads as $read) {
+            $count = socket_select($tmp_reads, $tmp_writes, $except_socks, null);  // timeout 传 NULL 会一直阻塞直到有结果返回
+            foreach ($tmp_reads as $key => $read) {
 
                 if ($read == $servsock) {
                     /* 有新的客户端连接请求 */
@@ -97,16 +109,19 @@ class Server
                     if ($connsock) {
                         socket_getpeername($connsock, $addr, $port);  //获取远程客户端ip地址和端口
                         echo "client connect server: ip = $addr, port = $port" . PHP_EOL;
-
                         // 把新的连接sokcet加入监听
                         $read_socks[] = $connsock;
                         $write_socks[] = $connsock;
+                        $this->getRequest()->gc();
+                        $this->getResponse()->gc();
+
                     }
                 } else {
-                    /* 客户端传输数据 */
-                    $data = socket_read($read, 1024);  //从客户端读取数据, 此时一定会读到数组而不会产生阻塞
 
-                    if ($data === '') {
+                    $data = socket_read($read, 1024);  //从客户端读取数据, 此时一定会读到数组而不会产生阻塞
+                    socket_getpeername($read, $addr, $port);  //获取远程客户端ip地址和端口
+                    //客户端异常退出
+                    if($data===''){
                         //移除对该 socket 监听
                         foreach ($read_socks as $key => $val) {
                             if ($val == $read) unset($read_socks[$key]);
@@ -116,22 +131,36 @@ class Server
                             if ($val == $read) unset($write_socks[$key]);
                         }
 
+                        socket_close($read);
+                    }
+
+                    $request =  $this->getRequest();
+                    $request->setRequest($data);
+                     $request->isOver();
+
+
+//                    if ($key==count($tmp_reads)) {
+////                        $request->_init();
+////                        $sendData = $this->getResponse()->send('<html><body>hello word</body></html>');
+//                        $end=1;
+//                    }
+                    if(!empty($end)){
+                        if (!empty($sendData)&&in_array($read, $tmp_writes)) {
+                            //如果该客户端可写 把数据回写给客户端
+                            socket_write($read, $sendData);
+                        }
+                        //移除对该 socket 监听
+                        foreach ($read_socks as $key => $val) {
+                            if ($val == $read) unset($read_socks[$key]);
+                        }
+
+                        foreach ($write_socks as $key => $val) {
+                            if ($val == $read) unset($write_socks[$key]);
+                        }
 
                         socket_close($read);
-                        echo "client close" . PHP_EOL;
-
-                    } else {
-                        socket_getpeername($read, $addr, $port);  //获取远程客户端ip地址和端口
-
-                        echo "read from client # $addr:$port # " . $data;
-
-                        $data = strtoupper($data);  //小写转大写
-
-                        if (in_array($read, $tmp_writes)) {
-                            //如果该客户端可写 把数据回写给客户端
-                            socket_write($read, $data);
-                        }
                     }
+
                 }
             }
         }

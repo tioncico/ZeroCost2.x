@@ -8,3 +8,4 @@
 require 'Core/Server.php';
 
 $s = new Server();
+$s->init();

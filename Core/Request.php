@@ -9,14 +9,35 @@
 class Request
 {
     protected $req = [];
+    protected $request = '';
 
     function getRequest(){
         return $this->req;
     }
 
+    function setRequest($str){
+        $this->request.=$str;
+    }
 
-    function __construct($http)
+    function isOver(){
+        $list = explode("\r\n\r\n",$this->request);
+
+        $len = explode('content-length:',$list[0]);
+
+        $len = explode("\r\n",$len[1]);
+        $len = intval($len[0]);
+        var_dump($len);
+        var_dump(strlen($list[2]));
+    }
+
+    function gc(){
+        $this->request = '';
+        $this->req = [];
+    }
+
+    function _init()
     {
+        $http = $this->request;
         // 初始化
         $_POST = $_GET = $_COOKIE = $_REQUEST = $_SESSION = $_FILES =  array();
         $GLOBALS['HTTP_RAW_POST_DATA'] = '';
@@ -192,7 +213,8 @@ class Request
                                 'file_data' => $boundary_value,
                                 'file_size' => strlen($boundary_value),
                             );
-                            continue;
+                            $continue = 1;
+                            break;
                         }
                         // 是post field
                         else
@@ -204,6 +226,9 @@ class Request
                             }
                         }
                         break;
+                }
+                if(!empty($continue)){
+                    continue;
                 }
             }
         }
