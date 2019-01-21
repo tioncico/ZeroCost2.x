@@ -38,6 +38,10 @@ class Request
         $this->request.=$str;
     }
 
+    function getRequestStr(){
+        return $this->request;
+    }
+
     function isOver(){
         $this->request = strtolower(    $this->request );
         $list = explode("\r\n\r\n",$this->request);

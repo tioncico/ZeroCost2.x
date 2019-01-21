@@ -8,13 +8,13 @@
 class ShmQueue
 {
     private $maxSize = 0; // 队列最大长度
-    private $blockSize = 256; // 块的大小(byte)
-    private $memSize = 25600; // 最大共享内存(byte)
+    private $blockSize = 65533; // 块的大小(byte)
+    private $memSize = 6553300; // 最大共享内存(byte)
     private $shmId = 0;
     private $semId = 0;
-    public function __construct()
+    public function __construct($pro='t')
     {
-        $shmkey = ftok(__FILE__, 't');
+        $shmkey = ftok(__FILE__, $pro);
         $this->shmId = shmop_open($shmkey, "c", 0644, $this->memSize);
         $this->maxSize = $this->memSize / $this->blockSize - 3;
         $this->semId = sem_get($shmkey, 1);

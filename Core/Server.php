@@ -11,8 +11,13 @@ class Server
     protected $workList = [];
     protected $serverPid = 0;
     protected $mainPid = 0;
-    protected  $response = null;
-    protected  $request = null;
+    protected $response = null;
+    protected $request = null;
+    protected $shmReq = null;
+    protected $shmRes = null;
+    protected $host = '0.0.0.0';
+    protected $port = '8888';
+
 
     function __construct()
     {
@@ -25,8 +30,15 @@ class Server
         $this->mainPid = getmypid();
         require 'Response.php';
         require 'Request.php';
+        require 'ShmQueue.php';
+        $this->shmReq = new ShmQueue('q');
+        $this->shmRes = new ShmQueue('s');
         $this->response = new Response();
-        $this->request = new Request();
+        $this->request = [];
+        //最高支持10个并发
+        for ($i=0;$i<10;$i++){
+            $this->request[$i] = new Request();
+        }
     }
 
     protected function getResponse(): Response
@@ -34,8 +46,8 @@ class Server
         return $this->response;
     }
 
-    protected function getRequest():Request{
-        return $this->request;
+    protected function getRequest($index):Request{
+        return $this->request[$index];
     }
     public function init()
     {
@@ -67,106 +79,71 @@ class Server
 
     function work()
     {
+        while (1){
+            $this->shmReq->pop();
+            usleep(1);
+        }
 
     }
 
+    function onError($error){
+        if(!empty($error[4])&&$error[4]['errno']!=0){
+            var_dump($error);
+        }
+    }
+
+
     function run()
     {
-        // 创建一个socket
-        $servsock = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
-        if (FALSE === $servsock) {
-            $errcode = socket_last_error();
-            throw new Exception("socket create fail: " . socket_strerror($errcode));
-        }
-
-        if (!socket_bind($servsock, '127.0.0.1', 8888))    // 绑定ip地址及端口
-        {
-            $errcode = socket_last_error();
-            throw new Exception("socket bind fail: " . socket_strerror($errcode));
-        }
-
-        if (!socket_listen($servsock, 128))      // 允许多少个客户端来排队连接
-        {
-            $errcode = socket_last_error();
-            throw new Exception("socket listen fail: " . socket_strerror($errcode));
-        }
-        $servsock = $servsock;
-        /* 要监听的三个sockets数组 */
-        $read_socks = array();
-        $write_socks = array();
-        $except_socks = NULL;  // 注意 php 不支持直接将NULL作为引用传参，所以这里定义一个变量
-
-        $read_socks[] = $servsock;
+        $tcp_socket = stream_socket_server("tcp://{$this->host }:{$this->port}", $errno, $errstr);
+        $tcp_socket || die("$errstr ($errno)\n");
+        stream_set_blocking($tcp_socket, 0);//设置非阻塞
+        $client_list = [];
         while (1) {
-            $tmp_reads = $read_socks;
-            $tmp_writes = $write_socks;
-            $count = socket_select($tmp_reads, $tmp_writes, $except_socks, 30);  // timeout 传 NULL 会一直阻塞直到有结果返回
-
-            foreach ($tmp_reads as $key => $read) {
-
-                if ($read == $servsock) {
-
-                    /* 有新的客户端连接请求 */
-                    $connsock = socket_accept($servsock);  //响应客户端连接， 此时不会造成阻塞
-                    if ($connsock) {
-                        socket_getpeername($connsock, $addr, $port);  //获取远程客户端ip地址和端口
-                        echo "client connect server: ip = $addr, port = $port" . PHP_EOL;
-                        // 把新的连接sokcet加入监听
-                        $read_socks[] = $connsock;
-                        $write_socks[] = $connsock;
-                        $this->response->gc();
-                        $this->request->gc();
+            set_error_handler(function(...$err){
+                $this->onError($err);
+            });
+            $connection = stream_socket_accept($tcp_socket,0,$remote_address);
+            restore_error_handler();
+            if ($connection) {
+                $fd = intval($connection);
+                $client_list[intval($connection)] = $connection;
+                if($this->getRequest($fd%10)->getRequestStr()!=''){
+                    while (1){
+                        sleep(0.1);
+                        if($this->getRequest($fd%10)->getRequestStr()==''){
+                            break;
+                        }
                     }
+                }
+                $this->getRequest($fd%10)->gc();
+                stream_set_blocking($connection, 0);//设置客户端非阻塞
+            }
+            foreach ($client_list as $key=>$client){
+                $data = fread($client, 65535);
+                $power = false;
 
-                } else {
-                    $data = socket_read($read, 1024);  //从客户端读取数据, 此时一定会读到数组而不会产生阻塞
-                    socket_getpeername($read, $addr, $port);  //获取远程客户端ip地址和端口
-                    //客户端异常退出
-
-                    if($data===''){
-                        //移除对该 socket 监听
-                        foreach ($read_socks as $key => $val) {
-                            if ($val == $read) unset($read_socks[$key]);
-                        }
-
-                        foreach ($write_socks as $key => $val) {
-                            if ($val == $read) unset($write_socks[$key]);
-                        }
-                        socket_close($read);
-                        continue;
+                if ($data === '' || $data === false) {
+                    if ( feof($client)) {//客户端关闭
+                        unset($client_list[$client]);
                     }
+                }
+
+                if($data!=''){
+                    $this->shmReq->push($data);
+                    $this->getRequest($key%10)->setRequest($data);
+                    $power = $this->getRequest($key%10)->isOver();
+                }
 
 
-
-                    $request =   $this->request;
-
-                    $request->setRequest($data);
-                    //判断报文是否结束
-                    $end = $request->isOver();
-                    if ($end) {
-                        $request->_init();
-                        $sendData =  $this->response->send('<html><body>hello word</body></html>');
-
-                    }
-                    if(!empty($end)){
-                        if (!empty($sendData)&&in_array($read, $tmp_writes)) {
-                            //如果该客户端可写 把数据回写给客户端
-                            socket_write($read, $sendData);
-                        }
-                        //移除对该 socket 监听
-                        foreach ($read_socks as $key => $val) {
-                            if ($val == $read) unset($read_socks[$key]);
-                        }
-
-                        foreach ($write_socks as $key => $val) {
-                            if ($val == $read) unset($write_socks[$key]);
-                        }
-
-                        socket_close($read);
-                    }
-
+                if($power){
+                    fwrite($client,$this->response->send('hello word'));//发送给客户端
+                    $this->getRequest($key%10)->gc();
+                }else{
+                    continue;
                 }
             }
+            usleep(1);
         }
     }
 
