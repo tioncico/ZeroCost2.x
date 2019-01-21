@@ -115,6 +115,9 @@ class Server
                         $this->response[$fd] = new Response();
                         $this->request[$fd] = new Request();
                     }
+                    if($fd==99999){
+                        $fd = 0;
+                    }
                 } else {
                     $data = socket_read($read, 1024);  //从客户端读取数据, 此时一定会读到数组而不会产生阻塞
                     socket_getpeername($read, $addr, $port);  //获取远程客户端ip地址和端口
@@ -137,7 +140,6 @@ class Server
                     $end = $request->isOver();
                     if ($end) {
                         $request->_init();
-                        var_dump($request->getRequest());
                         $sendData = $this->response[$fd]->send('<html><body>hello word</body></html>');
                         unset($this->response[$fd]);
                         unset($this->request[$fd]);
